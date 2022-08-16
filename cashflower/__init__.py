@@ -8,12 +8,15 @@ import pandas as pd
 
 from . import admin
 from . import utils
+import types
+from multiprocessing import Pool
 
 
 def assign(var):
     def wrapper(func):
         func = functools.cache(func)
         var.formula = func
+        # setattr(var, "formula", types.MethodType(func, var))
         return func
     return wrapper
 
@@ -59,14 +62,16 @@ class ModelPoint:
         self.policy_data = None
         self.policy_record = None
 
-    def __repr__(self):
-        return f"MP: {self.name}"
+    # def __repr__(self):
+    #     return f"MP: {self.name}"
 
     def __len__(self):
         return self.data.shape[0]
 
     @functools.cache
     def get(self, attribute):
+        # print("policy_record2:\n", self.policy_record)
+        # print(self)
         return self.policy_record[attribute]
 
     @property
@@ -78,6 +83,7 @@ class ModelPoint:
         """ Policy id in model point is changed by model.calculated_all_policies() """
         self._policy_id = new_policy_id
         self.policy_data = self.data[self.data["POLICY_ID"] == new_policy_id]
+        # print("policy_data:\n", self.policy_data) OK
         self.size = self.policy_data.shape[0]
 
     @property
@@ -89,6 +95,8 @@ class ModelPoint:
         """ Record number is changed in model_variable.calculate() """
         self._record_num = new_record_num
         self.policy_record = self.policy_data.iloc[new_record_num]
+        # print("policy_record1:\n", self.policy_record)
+        # print(self)
         self.get.cache_clear()
 
 
@@ -116,6 +124,7 @@ class ModelVariable:
         self.result = None
         self.children = []
         self.grandchildren = []
+        self.record_num = 0
 
     def __repr__(self):
         return f"MV: {self.name}"
@@ -139,7 +148,7 @@ class ModelVariable:
         for r in range(self.modelpoint.size):
             self.modelpoint.record_num = r
             self.clear()
-
+            # print("Calculating", self.name, "...")
             # The try-except formula helps with autorecursive functions
             try:
                 self.result[r] = list(map(self.formula, range(1440)))
@@ -149,6 +158,9 @@ class ModelVariable:
     def clear(self):
         if self.recalc:
             self.formula.cache_clear()
+
+    def get_value(self, attribute):
+        return self.modelpoint.data.iloc[self.record_num][attribute]
 
 
 class Model:
@@ -248,12 +260,38 @@ class Model:
 
         return output
 
+    def calculate_specific_policy(self, row):
+        print("test")
+        primary = self.get_modelpoint("policy")
+        policy_id = primary.data.iloc[row]["POLICY_ID"]
+        print("policy_id:", policy_id)
+
+        output = self.get_empty_output()
+
+        # All modelpoints must have the same policy ID
+        for modelpoint in self.modelpoints:
+            modelpoint.policy_id = policy_id
+
+        # variable.result is a list of lists
+        for variable in self.queue:
+            variable.calculate()
+            output[variable.modelpoint.name][variable.name] = utils.flatten(variable.result)
+
+        # output contains time and record number
+        for modelpoint in self.modelpoints:
+            output[modelpoint.name]["t"] = list(range(1440)) * modelpoint.size
+            output[modelpoint.name]["r"] = utils.repeated_numbers(modelpoint.size, 1440)
+
+        self.clear_variables()
+        print(output)
+        return output
+
     def calculate_all_policies(self):
         output = self.get_empty_output()
         primary = self.get_modelpoint("policy")
 
         for row in range(len(primary)):
-            start = time.time()
+            # print(row)
 
             # Primary modelpoint has unique column with policy ID
             policy_id = primary.data.iloc[row]["POLICY_ID"]
@@ -267,7 +305,8 @@ class Model:
 
             for modelpoint in self.modelpoints:
                 output[modelpoint.name] = pd.concat([output[modelpoint.name], policy_output[modelpoint.name]])
-
+        # pool = Pool()
+        # x = list(pool.map(self.calculate_specific_policy, range(len(primary))))
         self.output = output
 
     def run(self):
@@ -282,7 +321,7 @@ class Model:
         if not os.path.exists("output"):
             os.makedirs("output")
 
-        for mp in ModelPoint.instances:
-            filepath = f"output/{timestamp}_{mp.name}.csv"
-            self.output.get(mp.name).to_csv(filepath)
+        # for mp in ModelPoint.instances:
+        #     filepath = f"output/{timestamp}_{mp.name}.csv"
+        #     self.output.get(mp.name).to_csv(filepath)
 
