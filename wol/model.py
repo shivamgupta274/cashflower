@@ -33,7 +33,9 @@ def age_formula(t):
 @assign(death_prob)
 def death_prob_formula(t):
     sex = policy.get("SEX")
-    if age(t) <= 100:
+    if age(t) == age(t-1):
+        return death_prob(t-1)
+    elif age(t) <= 100:
         yearly_rate = float(get_cell(assumption["mortality"], sex, AGE=age(t)))
         monthly_rate = (1 - (1 - yearly_rate)**(1/12))
         return monthly_rate

@@ -11,7 +11,7 @@ def do_everything(chunk):
     variables, modelpoints = get_model_input(modelpoint_module, model_module)
 
     for modelpoint in modelpoints:
-        modelpoint.data = modelpoint.data[chunk*25:(chunk+1)*25]
+        modelpoint.data = modelpoint.data[chunk*250:(chunk+1)*250]
 
     model = Model(variables, modelpoints)
     model.run()
@@ -32,11 +32,10 @@ if __name__ == "__main__":
     print("Starting...")
     st = time.time()
 
-    with Pool() as pool:
-        x = list(pool.map(do_everything, range(4)))
+    # with Pool() as pool:
+    #     x = list(pool.map(do_everything, range(4)))
 
-    # x = do_everything2()
-
+    x = do_everything2()
     print(x)
 
     # get the execution time

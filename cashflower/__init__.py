@@ -10,13 +10,13 @@ from . import admin
 from . import utils
 import types
 from multiprocessing import Pool
+import numpy as np
 
 
 def assign(var):
     def wrapper(func):
         func = functools.cache(func)
         var.formula = func
-        # setattr(var, "formula", types.MethodType(func, var))
         return func
     return wrapper
 
@@ -62,16 +62,14 @@ class ModelPoint:
         self.policy_data = None
         self.policy_record = None
 
-    # def __repr__(self):
-    #     return f"MP: {self.name}"
+    def __repr__(self):
+        return f"MP: {self.name}"
 
     def __len__(self):
         return self.data.shape[0]
 
     @functools.cache
     def get(self, attribute):
-        # print("policy_record2:\n", self.policy_record)
-        # print(self)
         return self.policy_record[attribute]
 
     @property
@@ -83,7 +81,6 @@ class ModelPoint:
         """ Policy id in model point is changed by model.calculated_all_policies() """
         self._policy_id = new_policy_id
         self.policy_data = self.data[self.data["POLICY_ID"] == new_policy_id]
-        # print("policy_data:\n", self.policy_data) OK
         self.size = self.policy_data.shape[0]
 
     @property
@@ -95,8 +92,6 @@ class ModelPoint:
         """ Record number is changed in model_variable.calculate() """
         self._record_num = new_record_num
         self.policy_record = self.policy_data.iloc[new_record_num]
-        # print("policy_record1:\n", self.policy_record)
-        # print(self)
         self.get.cache_clear()
 
 
@@ -121,6 +116,7 @@ class ModelVariable:
         self.modelpoint = modelpoint
         self.recalc = recalc
         self.formula = None
+        self.vectorized_func = None
         self.result = None
         self.children = []
         self.grandchildren = []
@@ -148,7 +144,6 @@ class ModelVariable:
         for r in range(self.modelpoint.size):
             self.modelpoint.record_num = r
             self.clear()
-            # print("Calculating", self.name, "...")
             # The try-except formula helps with autorecursive functions
             try:
                 self.result[r] = list(map(self.formula, range(1440)))
@@ -158,9 +153,6 @@ class ModelVariable:
     def clear(self):
         if self.recalc:
             self.formula.cache_clear()
-
-    def get_value(self, attribute):
-        return self.modelpoint.data.iloc[self.record_num][attribute]
 
 
 class Model:
@@ -230,6 +222,7 @@ class Model:
 
         for variable in self.variables:
             empty_output[variable.modelpoint.name][variable.name] = None
+
         self.empty_output = empty_output
 
     def get_empty_output(self):
@@ -246,53 +239,34 @@ class Model:
             variable.clear()
 
     def calculate_one_policy(self):
-        output = self.get_empty_output()
+        # output = self.get_empty_output()
+        output = self.empty_output.copy()
 
         # variable.result is a list of lists
         for variable in self.queue:
+            # st = time.time()
             variable.calculate()
+            # en = time.time()
+            # print(variable.name, "c", en - st)
+
             output[variable.modelpoint.name][variable.name] = utils.flatten(variable.result)
+            en = time.time()
 
         # output contains time and record number
         for modelpoint in self.modelpoints:
             output[modelpoint.name]["t"] = list(range(1440)) * modelpoint.size
             output[modelpoint.name]["r"] = utils.repeated_numbers(modelpoint.size, 1440)
 
-        return output
-
-    def calculate_specific_policy(self, row):
-        print("test")
-        primary = self.get_modelpoint("policy")
-        policy_id = primary.data.iloc[row]["POLICY_ID"]
-        print("policy_id:", policy_id)
-
-        output = self.get_empty_output()
-
-        # All modelpoints must have the same policy ID
-        for modelpoint in self.modelpoints:
-            modelpoint.policy_id = policy_id
-
-        # variable.result is a list of lists
-        for variable in self.queue:
-            variable.calculate()
-            output[variable.modelpoint.name][variable.name] = utils.flatten(variable.result)
-
-        # output contains time and record number
-        for modelpoint in self.modelpoints:
-            output[modelpoint.name]["t"] = list(range(1440)) * modelpoint.size
-            output[modelpoint.name]["r"] = utils.repeated_numbers(modelpoint.size, 1440)
-
-        self.clear_variables()
-        print(output)
         return output
 
     def calculate_all_policies(self):
-        output = self.get_empty_output()
+        # output = self.get_empty_output()
+        output = self.empty_output.copy()
         primary = self.get_modelpoint("policy")
 
+        policy_outputs = []
         for row in range(len(primary)):
-            # print(row)
-
+            st = time.time()
             # Primary modelpoint has unique column with policy ID
             policy_id = primary.data.iloc[row]["POLICY_ID"]
 
@@ -303,10 +277,14 @@ class Model:
             self.clear_variables()
             policy_output = self.calculate_one_policy()
 
-            for modelpoint in self.modelpoints:
-                output[modelpoint.name] = pd.concat([output[modelpoint.name], policy_output[modelpoint.name]])
-        # pool = Pool()
-        # x = list(pool.map(self.calculate_specific_policy, range(len(primary))))
+            policy_outputs.append(policy_output)
+
+            en = time.time()
+            # print("row", row, "t:", en - st, "\n")
+
+        for modelpoint in self.modelpoints:
+            output[modelpoint.name] = pd.concat(policy_output[modelpoint.name] for policy_output in policy_outputs)
+
         self.output = output
 
     def run(self):
